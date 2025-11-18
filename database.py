@@ -21,11 +21,24 @@ db = None
 database_url = os.getenv("DATABASE_URL")
 database_name = os.getenv("DATABASE_NAME")
 
-if database_url and database_name:
-    _client = MongoClient(database_url)
-    db = _client[database_name]
+# Initialize client gracefully to avoid crashing server if SRV or network issues
+try:
+    if database_url and database_name:
+        _client = MongoClient(database_url, serverSelectionTimeoutMS=3000)
+        # Trigger a lightweight server selection to validate DNS/SRV without blocking startup
+        try:
+            _client.admin.command('ping')
+        except Exception:
+            # It's okay if ping fails at startup; we'll keep db None if it can't be reached
+            pass
+        db = _client[database_name]
+except Exception as e:
+    # If initialization fails (e.g., missing dnspython for mongodb+srv), keep db as None.
+    _client = None
+    db = None
 
 # Helper functions for common database operations
+
 def create_document(collection_name: str, data: Union[BaseModel, dict]):
     """Insert a single document with timestamp"""
     if db is None:
@@ -42,6 +55,7 @@ def create_document(collection_name: str, data: Union[BaseModel, dict]):
 
     result = db[collection_name].insert_one(data_dict)
     return str(result.inserted_id)
+
 
 def get_documents(collection_name: str, filter_dict: dict = None, limit: int = None):
     """Get documents from collection"""
